@@ -23,7 +23,8 @@ struct Data {
 }
 
 fn main() {
-    let file_path = "/home/x2h1z/Downloads/DATA/dat/202109300705.dat";
+    let file_path = "D:/20211011160501/DATA/dat/202110110705.dat";
+    println!("{}", file_path);
     let mut reader = DatReader::new(file_path);
     reader.read();
 

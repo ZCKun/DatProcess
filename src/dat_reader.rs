@@ -1,4 +1,4 @@
-use std::io::{Read, BufRead, BufReader};
+use std::io::{Read, BufRead, BufReader, SeekFrom, Seek};
 use byteorder::{LittleEndian, ByteOrder};
 use std::fs::{File, OpenOptions};
 use crate::mdt_struct::{SzL2Order, SzL2Trans};
@@ -15,6 +15,7 @@ pub struct Header {
     r#type: i32,
     // 2 bytes
     data_len: i16,
+    data_len_bytes: [u8; 2]
 } // 8 bytes
 
 fn buf_reader<T: Read, const size: usize>(reader: &mut T) -> [u8; size] {
@@ -25,10 +26,15 @@ fn buf_reader<T: Read, const size: usize>(reader: &mut T) -> [u8; size] {
 
 impl Header {
     pub(crate) fn new<T: Read>(reader: &mut T) -> Header {
+
+        let total_len_bytes = &buf_reader::<T, 2>(reader);
+        let r#type_bytes = &buf_reader::<T, 4>(reader);
+        let data_len_bytes = buf_reader::<T, 2>(reader);
         Self {
-            total_len: LittleEndian::read_i16(&buf_reader::<T, 2>(reader)),
-            r#type: LittleEndian::read_i32(&buf_reader::<T, 4>(reader)),
-            data_len: LittleEndian::read_i16(&buf_reader::<T, 2>(reader)),
+            total_len: LittleEndian::read_i16(total_len_bytes),
+            r#type: LittleEndian::read_i32(r#type_bytes),
+            data_len: LittleEndian::read_i16(&data_len_bytes),
+            data_len_bytes,
         }
     }
 }
@@ -39,9 +45,8 @@ pub struct DatReader {
 
 unsafe fn cast_ref<'a, T>(bytes: &'a [u8]) -> &'a T {
     // assert correct endianness somehow
-    if bytes.len() != std::mem::size_of::<T>() {
-        assert_eq!(bytes.len(), std::mem::size_of::<T>());
-    }
+    assert_eq!(bytes.len(), std::mem::size_of::<T>());
+
     let ptr: *const u8 = bytes.as_ptr();
     assert_eq!(ptr.align_offset(std::mem::align_of::<T>()), 0);
 
@@ -65,28 +70,24 @@ impl DatReader {
 
         while !self.buf_reader.fill_buf().unwrap().is_empty() {
             let header = Header::new(&mut self.buf_reader);
-            if count >= 119057731 {
-                let buf_ref = self.buf_reader.by_ref();
-                println!("Count:{}, ByteSize:{}, CurrTotalLen:{},CurrDataLen:{}, buffer bytes:{}",
-                         count, byte_size, header.total_len, header.data_len, buf_ref.bytes().count());
-            }
+
             if header.data_len > 0 {
                 let mut data = vec![0; header.data_len as usize];
                 self.buf_reader.read(&mut data).unwrap();
 
                 if header.r#type == DataType::SZSE_L2_Order as i32 {
                     let order = unsafe { cast_ref::<SzL2Order>(&data) };
-                    println!("Order => T:{}, Symbol:{}, ChannelNo:{}, RecID:{}, count:{}",
-                             order.time, String::from_utf8_lossy(&order.symbol_code[0..6]), order.channel_no, order.order_id, count);
-                    // println!("Order => {:?}", order);
+                    // println!("Order => T:{}, Symbol:{}, ChannelNo:{}, RecID:{}, count:{}",
+                    //          order.time, String::from_utf8_lossy(&order.symbol_code[0..6]), order.channel_no, order.order_id, count);
+                    println!("Order => {:?}", order);
                 } else if header.r#type == DataType::SZSE_L2_Transaction as i32 {
                     let trade = unsafe { cast_ref::<SzL2Trans>(&data) };
-                    println!("Trade => T:{}, Symbol:{}, ChannelNo:{}, RecID:{}, count:{}",
-                             trade.trade_time, String::from_utf8_lossy(&trade.symbol_code[0..6]), trade.set_id, trade.trade_id, count);
-                    // println!("Trade => {:?}", trade);
+                    // println!("Trade => T:{}, Symbol:{}, ChannelNo:{}, RecID:{}, count:{}",
+                    //          trade.trade_time, String::from_utf8_lossy(&trade.symbol_code[0..6]), trade.set_id, trade.trade_id, count);
+                    println!("Trade => {:?}", trade);
                 }
             }
-            byte_size += header.total_len as i64;
+            byte_size += header.data_len as i64 + 8;
             count += 1;
         }
     }

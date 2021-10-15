@@ -10,12 +10,12 @@ use serde_json::error::Category::Data;
 #[repr(align(1))]
 pub struct Header {
     // 2 bytes
-    total_len: i16,
+    pub total_len: i16,
     // 4 bytes
-    r#type: i32,
+    pub r#type: i32,
     // 2 bytes
-    data_len: i16,
-    data_len_bytes: [u8; 2]
+    pub data_len: i16,
+    pub data_len_bytes: [u8; 2]
 } // 8 bytes
 
 fn buf_reader<T: Read, const size: usize>(reader: &mut T) -> [u8; size] {
@@ -39,28 +39,26 @@ impl Header {
     }
 }
 
-pub struct DatReader {
+pub struct DatReader<CB>
+where
+    CB: FnMut(&Header, &Vec<u8>),
+{
     buf_reader: BufReader<File>,
+    callback: CB,
 }
 
-unsafe fn cast_ref<'a, T>(bytes: &'a [u8]) -> &'a T {
-    // assert correct endianness somehow
-    assert_eq!(bytes.len(), std::mem::size_of::<T>());
-
-    let ptr: *const u8 = bytes.as_ptr();
-    assert_eq!(ptr.align_offset(std::mem::align_of::<T>()), 0);
-
-    ptr.cast::<T>().as_ref().unwrap()
-}
-
-impl DatReader {
-    pub(crate) fn new(file_path: &str) -> DatReader {
+impl<CB> DatReader<CB>
+where
+    CB: FnMut(&Header, &Vec<u8>),
+{
+    pub(crate) fn new(file_path: &str, c: CB) -> Self {
         let file = OpenOptions::new()
             .read(true)
             .open(file_path)
             .expect(format!("can't open file {}", file_path).as_str());
         Self {
-            buf_reader: BufReader::new(file)
+            buf_reader: BufReader::new(file),
+            callback: c,
         }
     }
 
@@ -75,17 +73,7 @@ impl DatReader {
                 let mut data = vec![0; header.data_len as usize];
                 self.buf_reader.read(&mut data).unwrap();
 
-                if header.r#type == DataType::SZSE_L2_Order as i32 {
-                    let order = unsafe { cast_ref::<SzL2Order>(&data) };
-                    // println!("Order => T:{}, Symbol:{}, ChannelNo:{}, RecID:{}, count:{}",
-                    //          order.time, String::from_utf8_lossy(&order.symbol_code[0..6]), order.channel_no, order.order_id, count);
-                    println!("Order => {:?}", order);
-                } else if header.r#type == DataType::SZSE_L2_Transaction as i32 {
-                    let trade = unsafe { cast_ref::<SzL2Trans>(&data) };
-                    // println!("Trade => T:{}, Symbol:{}, ChannelNo:{}, RecID:{}, count:{}",
-                    //          trade.trade_time, String::from_utf8_lossy(&trade.symbol_code[0..6]), trade.set_id, trade.trade_id, count);
-                    println!("Trade => {:?}", trade);
-                }
+                (self.callback)(&header, &data);
             }
             byte_size += header.data_len as i64 + 8;
             count += 1;
